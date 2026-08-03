@@ -4,8 +4,8 @@ env:
 
 on:
   schedule:
-    - cron: "0 20 2 * *"
-  workflow_dispatch:
+    - cron: "0 20 2 * *"          # 每月2号20:00 UTC（北京时间凌晨4点）
+  workflow_dispatch:              # 支持手动触发
 
 jobs:
   build:
@@ -14,42 +14,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # 预先测试 DNSPod API 是否能正常添加记录
-      - name: Test DNSPod API
-        env:
-          DP_Id: ${{ secrets.DP_SecretId }}
-          DP_Key: ${{ secrets.DP_SecretKey }}
-        run: |
-          # 使用 acme.sh 自带的 dns_dp 脚本测试（acme.sh 安装后会有）
-          # 但我们可以先手动 curl 测试
-          echo "Testing DNSPod API..."
-          curl -X POST https://dnspod.tencentcloudapi.com \
-            -H "Content-Type: application/json" \
-            -d '{
-              "Action": "DescribeDomainList",
-              "Version": "2021-03-23"
-            }' -v
-          # 实际上需要签名，太复杂，略过，直接安装 acme.sh
-
       - name: Install acme.sh
         run: |
           curl https://get.acme.sh | sh -s email=${{ secrets.EMAIL }}
           ~/.acme.sh/acme.sh --upgrade --auto-upgrade
 
-      - name: Issue certificate via DNSPod (debug)
+      - name: Issue certificate via DNSPod (Tencent Cloud API)
         env:
-          DP_Id: ${{ secrets.DP_SecretId }}
-          DP_Key: ${{ secrets.DP_SecretKey }}
+          DP_Id: ${{ secrets.DP_SecretId }}    # SecretId
+          DP_Key: ${{ secrets.DP_SecretKey }}  # SecretKey
         run: |
-          # 使用 Let's Encrypt 并开启调试日志
-          ~/.acme.sh/acme.sh --issue --dns dns_dp \
+          ~/.acme.sh/acme.sh --issue --dns dns_tencentcloud \
             -d "${{ secrets.DOMAIN }}" \
             --keylength ec-256 \
             --server letsencrypt \
-            --debug 2 \
-            --log /tmp/acme.log \
             --force
-          cat /tmp/acme.log  # 打印日志
 
       - name: Export certificate
         run: |
