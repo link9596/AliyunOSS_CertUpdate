@@ -14,29 +14,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install acme.sh
+      - name: Install dependencies
         run: |
-          curl https://get.acme.sh | sh -s email=${{ secrets.EMAIL }}
-          ~/.acme.sh/acme.sh --upgrade --auto-upgrade
+          sudo apt update
+          sudo apt install -y certbot python3-pip
+          pip3 install requests
 
-      - name: Issue certificate via DNSPod (Tencent Cloud API)
+      - name: Issue certificate via DNSPod (Python hook)
         env:
-          DP_Id: ${{ secrets.DP_SecretId }}
-          DP_Key: ${{ secrets.DP_SecretKey }}
-          DP_Api: "tencent"   # 关键：强制使用新版 API
+          DP_SecretId: ${{ secrets.DP_SecretId }}
+          DP_SecretKey: ${{ secrets.DP_SecretKey }}
         run: |
-          ~/.acme.sh/acme.sh --issue --dns dns_dp \
-            -d "${{ secrets.DOMAIN }}" \
-            --keylength ec-256 \
-            --server letsencrypt \
-            --force
+          chmod +x dnspod_auth.py
+          sudo mkdir -p /etc/letsencrypt/certs
+          sudo certbot certonly -d "${{ secrets.DOMAIN }}" \
+            --manual --preferred-challenges dns \
+            --manual-auth-hook "./dnspod_auth.py" \
+            --manual-cleanup-hook "./dnspod_auth.py clean" \
+            --agree-tos --email ${{ secrets.EMAIL }} \
+            --non-interactive
 
-      - name: Export certificate
+      - name: Export certificate (already in /etc/letsencrypt/live/)
         run: |
-          sudo mkdir -p /etc/letsencrypt/live/${{ secrets.DOMAIN }}
-          sudo ~/.acme.sh/acme.sh --install-cert -d "${{ secrets.DOMAIN }}" \
-            --fullchain-file /etc/letsencrypt/live/${{ secrets.DOMAIN }}/fullchain.pem \
-            --key-file /etc/letsencrypt/live/${{ secrets.DOMAIN }}/privkey.pem
+          # certbot 默认将证书放在 /etc/letsencrypt/live/$DOMAIN/
+          echo "证书已由 certbot 生成"
 
       - name: Run OSS Cert Update
         run: |
