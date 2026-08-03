@@ -26,24 +26,22 @@ jobs:
           DP_SecretKey: ${{ secrets.DP_SecretKey }}
         run: |
           chmod +x dnspod_auth.py
-          sudo mkdir -p /etc/letsencrypt/certs
-          sudo certbot certonly -d "${{ secrets.DOMAIN }}" \
+          mkdir -p ~/letsencrypt
+          certbot certonly -d "${{ secrets.DOMAIN }}" \
             --manual --preferred-challenges dns \
             --manual-auth-hook "./dnspod_auth.py" \
             --manual-cleanup-hook "./dnspod_auth.py clean" \
             --agree-tos --email ${{ secrets.EMAIL }} \
-            --non-interactive
-
-      - name: Export certificate (already in /etc/letsencrypt/live/)
-        run: |
-          # certbot 默认将证书放在 /etc/letsencrypt/live/$DOMAIN/
-          echo "证书已由 certbot 生成"
+            --non-interactive \
+            --config-dir ~/letsencrypt/config \
+            --work-dir ~/letsencrypt/work \
+            --logs-dir ~/letsencrypt/logs
 
       - name: Run OSS Cert Update
         run: |
-          CERT_PATH="/etc/letsencrypt/live/${{ secrets.DOMAIN }}"
-          export CERTIFICATE="$(sudo cat $CERT_PATH/fullchain.pem)"
-          export PRIVATE_KEY="$(sudo cat $CERT_PATH/privkey.pem)"
+          CERT_PATH="$HOME/letsencrypt/config/live/${{ secrets.DOMAIN }}"
+          export CERTIFICATE="$(cat $CERT_PATH/fullchain.pem)"
+          export PRIVATE_KEY="$(cat $CERT_PATH/privkey.pem)"
           python oss_update.py \
             --access-key-id "${{ secrets.ACCESS_KEY_ID }}" \
             --access-key-secret "${{ secrets.ACCESS_KEY_SECRET }}" \
