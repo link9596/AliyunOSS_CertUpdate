@@ -4,8 +4,8 @@ env:
 
 on:
   schedule:
-    - cron: "0 20 2 * *"
-  workflow_dispatch:
+    - cron: "0 20 2 * *"          # 每月2号20:00 UTC（北京时间凌晨4点）
+  workflow_dispatch:              # 支持手动触发
 
 jobs:
   build:
@@ -18,7 +18,7 @@ jobs:
         run: |
           sudo apt update
           sudo apt install -y certbot python3-pip
-          pip3 install requests
+          pip3 install requests oss2
 
       - name: Issue certificate via DNSPod (Python hook)
         env:
