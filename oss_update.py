@@ -70,7 +70,7 @@ def main():
     parser.add_argument('--target-cname', required=True, help='需要更新证书的自定义域名')
     parser.add_argument('--private-key', required=True, help='证书私钥内容')
     parser.add_argument('--certificate', required=True, help='证书内容')
-    parser.add_argument('--region', default='cn-hangzhou', help='OSS 区域，默认为 cn-hangzhou')
+    parser.add_argument('--region', default='cn-hongkong', help='OSS 区域，默认为 cn-hangzhou')
 
     args = parser.parse_args()
 
