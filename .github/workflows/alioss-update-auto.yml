@@ -4,8 +4,8 @@ env:
 
 on:
   schedule:
-    - cron: "0 20 2 * *"          # 每月2号20:00 UTC（北京时间凌晨4点）
-  workflow_dispatch:              # 支持手动触发
+    - cron: "0 20 2 * *"
+  workflow_dispatch:
 
 jobs:
   build:
@@ -14,15 +14,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install acme.sh
+      - name: Install acme.sh and download dns_tencentcloud plugin
         run: |
+          # 安装 acme.sh
           curl https://get.acme.sh | sh -s email=${{ secrets.EMAIL }}
           ~/.acme.sh/acme.sh --upgrade --auto-upgrade
 
+          # 确保 dnsapi 目录存在
+          mkdir -p ~/.acme.sh/dnsapi
+
+          # 下载 dns_tencentcloud 插件（如果不存在）
+          if [ ! -f ~/.acme.sh/dnsapi/dns_tencentcloud.sh ]; then
+            echo "Downloading dns_tencentcloud plugin..."
+            curl -o ~/.acme.sh/dnsapi/dns_tencentcloud.sh \
+              https://raw.githubusercontent.com/acmesh-official/acme.sh/master/dnsapi/dns_tencentcloud.sh
+            chmod +x ~/.acme.sh/dnsapi/dns_tencentcloud.sh
+          fi
+
       - name: Issue certificate via DNSPod (Tencent Cloud API)
         env:
-          DP_Id: ${{ secrets.DP_SecretId }}    # SecretId
-          DP_Key: ${{ secrets.DP_SecretKey }}  # SecretKey
+          DP_Id: ${{ secrets.DP_SecretId }}
+          DP_Key: ${{ secrets.DP_SecretKey }}
         run: |
           ~/.acme.sh/acme.sh --issue --dns dns_tencentcloud \
             -d "${{ secrets.DOMAIN }}" \
