@@ -4,7 +4,7 @@ env:
 
 on:
   schedule:
-    - cron: "0 20 2 * *"   # 每月2号20点执行（UTC，北京时间凌晨4点）
+    - cron: "0 20 2 * *"   # 每月2号20:00 UTC（北京时间凌晨4点）
   workflow_dispatch:
 
 jobs:
@@ -12,35 +12,30 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4    # 升级到v4，避免Node.js警告
+      - uses: actions/checkout@v4
 
-      - name: Init Action
+      - name: Install acme.sh
         run: |
-          sudo apt update
-          sudo apt install -y certbot curl openssl
-          pip install -r requirements.txt
+          curl https://get.acme.sh | sh -s email=${{ secrets.EMAIL }}
+          ~/.acme.sh/acme.sh --upgrade --auto-upgrade
 
-      # 将 dnspod.sh 放到系统路径，并赋予执行权限
-      - name: Setup DNSPod Hook
-        run: |
-          sudo cp dnspod.sh /usr/local/bin/dnspod
-          sudo chmod +x /usr/local/bin/dnspod
-
-      # 申请证书：通过 sudo -E 保留环境变量
-      - name: Apply for a new certificate
+      - name: Issue certificate via DNSPod
         env:
-          DP_SecretId: ${{ secrets.DP_SecretId }}
-          DP_SecretKey: ${{ secrets.DP_SecretKey }}
+          DP_Id: ${{ secrets.DP_SecretId }}      # acme.sh 用这两个变量名
+          DP_Key: ${{ secrets.DP_SecretKey }}
         run: |
-          sudo mkdir -p /etc/letsencrypt/certs
-          sudo -E certbot certonly -d "${{ secrets.DOMAIN }}" \
-                --manual --preferred-challenges dns \
-                --manual-auth-hook "/usr/local/bin/dnspod" \
-                --manual-cleanup-hook "/usr/local/bin/dnspod clean" \
-                --agree-tos --email ${{ secrets.EMAIL }} \
-                --non-interactive
+          ~/.acme.sh/acme.sh --issue --dns dns_dp \
+            -d "${{ secrets.DOMAIN }}" \
+            --keylength ec-256 \
+            --force
 
-      # 上传证书到阿里云OSS（保留原有逻辑）
+      - name: Export certificate to /etc/letsencrypt (兼容你原来的流程)
+        run: |
+          sudo mkdir -p /etc/letsencrypt/live/${{ secrets.DOMAIN }}
+          sudo ~/.acme.sh/acme.sh --install-cert -d "${{ secrets.DOMAIN }}" \
+            --fullchain-file /etc/letsencrypt/live/${{ secrets.DOMAIN }}/fullchain.pem \
+            --key-file /etc/letsencrypt/live/${{ secrets.DOMAIN }}/privkey.pem
+
       - name: Run OSS Cert Update
         run: |
           CERT_PATH="/etc/letsencrypt/live/${{ secrets.DOMAIN }}"
