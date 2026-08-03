@@ -15,15 +15,12 @@ fi
 parse_domain() {
     local full="$1"
     local domain sub
-    # 匹配双后缀
     if echo "$full" | grep -E -q "(\.com\.cn|\.gov\.cn|\.net\.cn|\.org\.cn|\.ac\.cn|\.gd\.cn)$"; then
         domain=$(echo "$full" | grep -oP '[^.]+(\.com\.cn|\.gov\.cn|\.net\.cn|\.org\.cn|\.ac\.cn|\.gd\.cn)$')
         sub=$(echo "$full" | grep -oP '.*(?=\.[^.]+(\.com\.cn|\.gov\.cn|\.net\.cn|\.org\.cn|\.ac\.cn|\.gd\.cn)$)')
     else
-        # 对于 example.com 格式
         domain=$(echo "$full" | sed -r 's/^[^.]*\.([^.]*\..*)$/\1/')
         if [ "$domain" = "$full" ]; then
-            # 本身就是主域名
             domain="$full"
             sub=""
         else
@@ -38,30 +35,35 @@ sha256_hex() {
     printf "%s" "$1" | openssl dgst -sha256 -hex | awk '{print $2}'
 }
 
-# HMAC-SHA256（输出二进制）
-hmac_sha256_bin() {
-    local key="$1"
+# HMAC-SHA256（输出十六进制小写）
+hmac_hex() {
+    local key="$1"      # 可以是普通字符串或十六进制字符串（需带 -macopt hexkey）
     local msg="$2"
-    printf "%s" "$msg" | openssl dgst -sha256 -mac hmac -macopt hexkey:"$key" -binary 2>/dev/null
+    local is_hex="$3"   # 如果 key 是十六进制格式，传 1，否则传 0
+    if [ "$is_hex" = "1" ]; then
+        printf "%s" "$msg" | openssl dgst -sha256 -mac hmac -macopt hexkey:"$key" -hex 2>/dev/null | awk '{print $2}'
+    else
+        printf "%s" "$msg" | openssl dgst -sha256 -mac hmac -macopt key:"$key" -hex 2>/dev/null | awk '{print $2}'
+    fi
 }
 
-# 腾讯云 API 签名（TC3-HMAC-SHA256）
+# 腾讯云 API 签名（TC3-HMAC-SHA256），完全按照 JS 逻辑
 tc3_sign() {
     local secret_key="$1"
     local date="$2"
     local service="$3"
     local string_to_sign="$4"
 
-    # 1. 计算派生签名密钥
+    # 1. 派生签名密钥（与 JS 完全一致）
     # SecretDate = HMAC_SHA256("TC3" + SecretKey, Date)
-    local secret_date_hex=$(printf "%s" "$date" | openssl dgst -sha256 -mac hmac -macopt key:"TC3$secret_key" -hex 2>/dev/null | awk '{print $2}')
-    # SecretService = HMAC_SHA256(SecretDate, Service)
-    local secret_service_hex=$(printf "%s" "$service" | openssl dgst -sha256 -mac hmac -macopt hexkey:"$secret_date_hex" -hex 2>/dev/null | awk '{print $2}')
+    local secret_date_hex=$(hmac_hex "TC3$secret_key" "$date" 0)
+    # SecretService = HMAC_SHA256(SecretDate, Service)  注意 SecretDate 是十六进制，作为 hexkey
+    local secret_service_hex=$(hmac_hex "$secret_date_hex" "$service" 1)
     # SecretSigning = HMAC_SHA256(SecretService, "tc3_request")
-    local secret_signing_hex=$(printf "%s" "tc3_request" | openssl dgst -sha256 -mac hmac -macopt hexkey:"$secret_service_hex" -hex 2>/dev/null | awk '{print $2}')
+    local secret_signing_hex=$(hmac_hex "$secret_service_hex" "tc3_request" 1)
 
     # 2. 计算签名：HMAC_SHA256(SecretSigning, StringToSign)
-    local signature=$(printf "%s" "$string_to_sign" | openssl dgst -sha256 -mac hmac -macopt hexkey:"$secret_signing_hex" -hex 2>/dev/null | awk '{print $2}')
+    local signature=$(hmac_hex "$secret_signing_hex" "$string_to_sign" 1)
     echo "$signature"
 }
 
@@ -78,19 +80,21 @@ call_dnspod() {
     local timestamp=$(date -u +%s)
     local date=$(date -u -d @"$timestamp" +%Y-%m-%d)
 
-    # 1. 拼接规范请求串 CanonicalRequest
-    local http_request_method="POST"
+    # 1. 拼接规范请求串 CanonicalRequest（与 JS 保持一致）
+    local http_method="POST"
     local canonical_uri="/"
-    local canonical_querystring=""  # POST 请求固定为空[reference:3]
-    local content_type="application/json"
-    local canonical_headers="content-type:$content_type\nhost:$host\n"
-    local signed_headers="content-type;host"
+    local canonical_querystring=""   # POST 请求固定为空
+    local content_type="application/json; charset=utf-8"
+    local action_lower=$(echo "$action" | tr '[:upper:]' '[:lower:]')
+    # canonicalHeaders 必须按字母序排列：content-type, host, x-tc-action
+    local canonical_headers="content-type:$content_type\nhost:$host\nx-tc-action:$action_lower\n"
+    local signed_headers="content-type;host;x-tc-action"
 
-    # 请求正文的 SHA256 哈希[reference:4]
+    # 请求正文的 SHA256 哈希
     local payload_hash=$(sha256_hex "$payload")
-    local canonical_request="${http_request_method}\n${canonical_uri}\n${canonical_querystring}\n${canonical_headers}\n${signed_headers}\n${payload_hash}"
+    local canonical_request="${http_method}\n${canonical_uri}\n${canonical_querystring}\n${canonical_headers}\n${signed_headers}\n${payload_hash}"
 
-    # 2. 拼接待签名字符串 StringToSign[reference:5]
+    # 2. 拼接待签名字符串 StringToSign
     local hashed_canonical_request=$(sha256_hex "$canonical_request")
     local credential_scope="${date}/${service}/tc3_request"
     local string_to_sign="${algorithm}\n${timestamp}\n${credential_scope}\n${hashed_canonical_request}"
@@ -98,7 +102,7 @@ call_dnspod() {
     # 3. 计算签名
     local signature=$(tc3_sign "$secret_key" "$date" "$service" "$string_to_sign")
 
-    # 4. 拼接 Authorization[reference:6]
+    # 4. 拼接 Authorization
     local authorization="${algorithm} Credential=${secret_id}/${credential_scope}, SignedHeaders=${signed_headers}, Signature=${signature}"
 
     # 发送请求
@@ -162,7 +166,7 @@ else
         exit 1
     else
         echo "成功添加 TXT 记录: $rr.$domain"
-        # 等待 DNS 传播（建议 60 秒更稳妥）
+        # 等待 DNS 传播（建议 60 秒）
         sleep 60
         exit 0
     fi
