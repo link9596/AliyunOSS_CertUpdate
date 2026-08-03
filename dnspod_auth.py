@@ -6,7 +6,7 @@ import time
 import hashlib
 import hmac
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 # 环境变量
 SECRET_ID = os.environ.get('DP_SecretId')
@@ -24,10 +24,8 @@ if not DOMAIN or not VALIDATION:
 
 # ---------- 解析域名 ----------
 def parse_domain(full):
-    # 简单处理：提取主域名（最后两个或三个部分）
     parts = full.split('.')
     if len(parts) >= 3 and parts[-2] in ('com', 'gov', 'net', 'org', 'ac', 'gd') and parts[-1] == 'cn':
-        # 双后缀，如 example.com.cn
         main_domain = '.'.join(parts[-3:])
         sub_domain = '.'.join(parts[:-3])
     else:
@@ -41,6 +39,9 @@ if sub_domain:
 else:
     rr = "_acme-challenge"
 
+# 调试输出，打印解析结果
+print(f"DEBUG: 主域名={main_domain}, 子域名部分={sub_domain}, RR={rr}, VALIDATION={VALIDATION}", file=sys.stderr)
+
 # ---------- 腾讯云 TC3 签名（完全来自 Worker JS）----------
 def sha256_hex(s):
     return hashlib.sha256(s.encode('utf-8')).hexdigest()
@@ -53,7 +54,6 @@ def hmac_sha256(key, msg, is_hex=False):
     return hmac.new(key, msg.encode('utf-8'), hashlib.sha256).digest()
 
 def tc3_sign(secret_key, date, service, string_to_sign):
-    # 派生签名密钥
     secret_date = hmac_sha256("TC3" + secret_key, date)
     secret_service = hmac_sha256(secret_date.hex(), service, is_hex=True)
     secret_signing = hmac_sha256(secret_service.hex(), "tc3_request", is_hex=True)
@@ -66,9 +66,9 @@ def call_dnspod(action, payload):
     version = "2021-03-23"
     algorithm = "TC3-HMAC-SHA256"
     timestamp = int(time.time())
-    date = datetime.utcfromtimestamp(timestamp).strftime('%Y-%m-%d')
+    # 修复弃用警告：使用 timezone-aware 对象
+    date = datetime.fromtimestamp(timestamp, tz=timezone.utc).strftime('%Y-%m-%d')
 
-    # 构建规范请求
     http_method = "POST"
     canonical_uri = "/"
     canonical_querystring = ""
@@ -101,11 +101,11 @@ def call_dnspod(action, payload):
 
 # ---------- 主逻辑 ----------
 if len(sys.argv) > 1 and sys.argv[1] == "clean":
-    # 删除记录
+    # 删除记录：修正 RecordType 为数组
     query_payload = {
         "Domain": main_domain,
         "SubDomain": rr,
-        "RecordType": "TXT"
+        "RecordType": ["TXT"]   # 改为数组类型
     }
     resp = call_dnspod("DescribeRecordFilterList", query_payload)
     if "Response" in resp and "Error" in resp["Response"]:
@@ -139,6 +139,8 @@ else:
     if "Response" in resp and "Error" in resp["Response"]:
         print(f"添加记录失败: {resp['Response']['Error']}", file=sys.stderr)
         sys.exit(1)
-    print(f"成功添加 TXT 记录: {rr}.{main_domain}")
+    print(f"成功添加 TXT 记录: {rr}.{main_domain} 值为 {VALIDATION}")  # 增加打印值
+
+    # 可选：查询验证记录是否已生效（这里只等待）
     time.sleep(60)  # 等待 DNS 传播
     sys.exit(0)
