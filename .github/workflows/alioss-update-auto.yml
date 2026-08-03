@@ -4,7 +4,7 @@ env:
 
 on:
   schedule:
-    - cron: "0 20 2 * *" # 时区对cron无效，所以要提前8个小时，
+    - cron: "0 20 2 * *"   # 每月2号20点执行（UTC，北京时间凌晨4点）
   workflow_dispatch:
 
 jobs:
@@ -12,34 +12,35 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4    # 升级到v4，避免Node.js警告
 
       - name: Init Action
         run: |
-          sudo apt install -y certbot
+          sudo apt update
+          sudo apt install -y certbot curl openssl
           pip install -r requirements.txt
 
-      - name: Aliyun Cli Tools
+      # 将 dnspod.sh 放到系统路径，并赋予执行权限
+      - name: Setup DNSPod Hook
         run: |
-          curl -o aliyun-cli.tgz https://aliyuncli.alicdn.com/aliyun-cli-linux-latest-amd64.tgz
-          tar xzvf aliyun-cli.tgz
-          sudo mv aliyun /usr/local/bin/
-          sudo aliyun configure set --profile akProfile --mode AK \
-            --access-key-id ${{ secrets.ACCESS_KEY_ID }} \
-            --access-key-secret ${{ secrets.ACCESS_KEY_SECRET }} \
-            --region ${{ secrets.REGION }}
+          sudo cp dnspod.sh /usr/local/bin/dnspod
+          sudo chmod +x /usr/local/bin/dnspod
 
-          sudo mv alidns.sh /usr/local/bin/alidns
-          sudo chmod +x /usr/local/bin/alidns
-
+      # 申请证书：通过 sudo -E 保留环境变量
       - name: Apply for a new certificate
+        env:
+          DP_SecretId: ${{ secrets.DP_SecretId }}
+          DP_SecretKey: ${{ secrets.DP_SecretKey }}
         run: |
           sudo mkdir -p /etc/letsencrypt/certs
-          sudo certbot certonly -d "${{ secrets.DOMAIN }}" --manual --preferred-challenges dns \
-                --manual-auth-hook "/usr/local/bin/alidns" \
-                --manual-cleanup-hook "/usr/local/bin/alidns clean" \
-                --agree-tos --email ${{ secrets.EMAIL }} --non-interactive
+          sudo -E certbot certonly -d "${{ secrets.DOMAIN }}" \
+                --manual --preferred-challenges dns \
+                --manual-auth-hook "/usr/local/bin/dnspod" \
+                --manual-cleanup-hook "/usr/local/bin/dnspod clean" \
+                --agree-tos --email ${{ secrets.EMAIL }} \
+                --non-interactive
 
+      # 上传证书到阿里云OSS（保留原有逻辑）
       - name: Run OSS Cert Update
         run: |
           CERT_PATH="/etc/letsencrypt/live/${{ secrets.DOMAIN }}"
